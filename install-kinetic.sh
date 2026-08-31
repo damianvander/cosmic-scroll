@@ -15,7 +15,9 @@
 #   ./install-kinetic.sh cosmic-comp           # just the compositor
 #   ./install-kinetic.sh cosmic-settings       # just the settings app
 #   ./install-kinetic.sh epoch-1.2.0           # both, pinned to an epoch
-#   ./install-kinetic.sh cosmic-comp --latest  # newest patched release
+#   ./install-kinetic.sh --latest              # both, newest patched release
+#                                              # (skips epoch auto-detection)
+#   ./install-kinetic.sh cosmic-comp --latest  # newest patched compositor
 #
 #   curl -fsSL https://raw.githubusercontent.com/damianvander/cosmic-scroll/master/install-kinetic.sh | bash
 #   curl -fsSL .../install-kinetic.sh | bash -s -- cosmic-settings
@@ -25,18 +27,6 @@ set -euo pipefail
 REPO="damianvander/cosmic-scroll"          # patch repo hosting the releases
 API="https://api.github.com/repos/${REPO}/releases"
 INSTALL_DIR="${INSTALL_DIR:-/usr/bin}"   # override with INSTALL_DIR=... for testing
-
-# ── Parse arguments (components + optional version selector, any order) ───────
-COMPONENT_SEL="all"
-SELECTOR=""
-for arg in "$@"; do
-    case "$arg" in
-        all|both)                  COMPONENT_SEL="all" ;;
-        cosmic-comp|comp)          COMPONENT_SEL="cosmic-comp" ;;
-        cosmic-settings|settings)  COMPONENT_SEL="cosmic-settings" ;;
-        *)                         SELECTOR="$arg" ;;
-    esac
-done
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -50,6 +40,21 @@ info()  { echo -e "${BOLD}${CYAN}::${RESET} $*"; }
 ok()    { echo -e "${BOLD}${GREEN}✓${RESET} $*"; }
 warn()  { echo -e "${BOLD}${YELLOW}⚠${RESET} $*"; }
 die()   { echo -e "${BOLD}${RED}✗${RESET} $*" >&2; exit 1; }
+
+# ── Parse arguments (components + optional version selector, any order) ───────
+COMPONENT_SEL="all"
+SELECTOR=""
+for arg in "$@"; do
+    case "$arg" in
+        all|both)                  COMPONENT_SEL="all" ;;
+        cosmic-comp|comp)          COMPONENT_SEL="cosmic-comp" ;;
+        cosmic-settings|settings)  COMPONENT_SEL="cosmic-settings" ;;
+        # Skip epoch auto-detection and install the newest patched release.
+        --latest|-l)               SELECTOR="--latest" ;;
+        -*)                        die "Unknown flag: ${arg}" ;;
+        *)                         SELECTOR="$arg" ;;
+    esac
+done
 
 # ── Dependency check ──────────────────────────────────────────────────────────
 for cmd in curl jq gzip sha256sum; do
@@ -84,10 +89,15 @@ detect_installed_epoch() {
 # `set -e` before any of the fallback/error paths below could run.
 get_release_by_tag() { curl -fsSL "${API}/tags/$1" 2>/dev/null || true; }
 
-# Newest release whose tag starts with patched-<component>-
+# Release with the highest epoch whose tag starts with patched-<component>-.
+# The API lists releases by creation date, which forced rebuilds of older
+# epochs can reorder — sort by the epoch version in the tag instead.
 latest_component_release() {
-    curl -fsSL "${API}" 2>/dev/null | jq -c --arg p "patched-${COMPONENT}-" \
-        'map(select(.tag_name | startswith($p))) | .[0] // empty' || true
+    curl -fsSL "${API}" 2>/dev/null | jq -c --arg p "patched-${COMPONENT}-" '
+        map(select(.tag_name | startswith($p)))
+        | sort_by(.tag_name | ltrimstr($p) | ltrimstr("epoch-")
+                  | split(".") | map(tonumber? // 0))
+        | last // empty' || true
 }
 
 # ── Resolve, download, verify, and install one component ──────────────────────

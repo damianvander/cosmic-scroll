@@ -21,6 +21,7 @@ Other options:
 ./install-kinetic.sh cosmic-comp       # compositor only
 ./install-kinetic.sh cosmic-settings   # settings app only
 ./install-kinetic.sh epoch-1.2.0       # pin a specific COSMIC version
+./install-kinetic.sh --latest          # skip version matching, newest release
 ```
 
 On other distros, build from source with the patches applied (see below).
@@ -34,12 +35,13 @@ On other distros, build from source with the patches applied (see below).
 
 ## Develop
 
-Upstream sources are not vendored. Clone them into the gitignored working dirs
-and apply the patches:
+Upstream sources are not vendored. Clone them into the gitignored working
+dirs at the epoch tag the patches track (currently `epoch-1.7.0`) and apply
+the patches:
 
 ```bash
-git clone https://github.com/pop-os/cosmic-comp.git     cosmic-comp
-git clone https://github.com/pop-os/cosmic-settings.git cosmic-settings
+git clone -b epoch-1.7.0 https://github.com/pop-os/cosmic-comp.git     cosmic-comp
+git clone -b epoch-1.7.0 https://github.com/pop-os/cosmic-settings.git cosmic-settings
 git -C cosmic-comp     apply ../cosmic-comp-kinetic.patch
 git -C cosmic-settings apply ../cosmic-settings-kinetic.patch
 ```

@@ -1,10 +1,10 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 493991d..24e673e 100644
+index 3bbaebe..30082d8 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -73,6 +73,12 @@ debug = true
- cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "d0e95be" }
- cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "d0e95be" }
+ cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "e95d895" }
+ cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "e95d895" }
  
 +# Build against the kinetic-patched cosmic-comp-config so the `kinetic` and
 +# `scroll_factor_per_app` fields on ScrollConfig are available to the UI.
@@ -16,10 +16,10 @@ index 493991d..24e673e 100644
  # cosmic-settings-config = { git = "https://github.com/pop-os/cosmic-settings-daemon//", branch = "input_nobuild" }
  
 diff --git a/cosmic-settings/src/pages/input/mod.rs b/cosmic-settings/src/pages/input/mod.rs
-index 10613dc..dc4d83f 100644
+index 10613dc..4f61190 100644
 --- a/cosmic-settings/src/pages/input/mod.rs
 +++ b/cosmic-settings/src/pages/input/mod.rs
-@@ -5,12 +5,22 @@ use crate::app;
+@@ -5,22 +5,49 @@ use crate::app;
  use cosmic::Task;
  use cosmic::cosmic_config::{self, ConfigGet, ConfigSet};
  use cosmic_comp_config::input::{
@@ -44,14 +44,20 @@ index 10613dc..dc4d83f 100644
  pub mod keyboard;
  pub mod mouse;
  pub mod touchpad;
-@@ -20,7 +30,20 @@ pub enum Message {
++mod window_picker;
+ 
+ #[derive(Clone, Debug)]
+ pub enum Message {
      // seperate close message, to make sure another isn't closed?
      DisableWhileTyping(bool, bool),
      PrimaryButtonSelected(cosmic::widget::segmented_button::Entity, bool),
 +    PerAppScrollAdd,
 +    PerAppScrollAppId(usize, String),
 +    PerAppScrollFactor(usize, String),
++    PerAppScrollPickWindow(usize),
 +    PerAppScrollRemove(usize),
++    PerAppScrollTogglePicker,
++    PerAppScrollWindowsLoaded(Vec<window_picker::WindowInfo>),
 +    ResetKineticConfig(bool),
      SetAcceleration(bool, bool),
 +    SetKineticFriction(f64, bool),
@@ -65,17 +71,22 @@ index 10613dc..dc4d83f 100644
      SetMouseSpeed(f64, bool),
      SetNaturalScroll(bool, bool),
      SetSecondaryClickBehavior(Option<ClickMethod>, bool),
-@@ -35,6 +58,9 @@ pub struct Page {
+@@ -35,6 +62,14 @@ pub struct Page {
      #[allow(dead_code)]
      input_touchpad: InputConfig,
  
 +    // Editable mirror of `input_touchpad.scroll_config.scroll_factor_per_app`.
 +    per_app_scroll: Vec<PerAppScrollEntry>,
 +
++    // Open-window picker for adding per-app overrides. The window list is
++    // queried from the compositor each time the picker is opened.
++    pub window_picker_open: bool,
++    pub open_windows: Vec<window_picker::WindowInfo>,
++
      // Mouse
      primary_button: cosmic::widget::segmented_button::SingleSelectModel,
  
-@@ -69,11 +95,15 @@ impl Default for Page {
+@@ -69,11 +104,17 @@ impl Default for Page {
          let idx = input_touchpad.left_handed.unwrap_or(false) as u16;
          touchpad_primary_button.activate_position(idx);
  
@@ -87,11 +98,13 @@ index 10613dc..dc4d83f 100644
              input_touchpad,
  
 +            per_app_scroll,
++            window_picker_open: false,
++            open_windows: Vec::new(),
 +
              // Mouse
              primary_button,
  
-@@ -83,6 +113,26 @@ impl Default for Page {
+@@ -83,6 +124,26 @@ impl Default for Page {
      }
  }
  
@@ -118,7 +131,7 @@ index 10613dc..dc4d83f 100644
  impl Page {
      fn update_input<F: Fn(&mut InputConfig)>(&mut self, touchpad: bool, f: F) {
          let (name, input_config) = if touchpad {
-@@ -96,9 +146,73 @@ impl Page {
+@@ -96,9 +157,112 @@ impl Page {
          }
      }
  
@@ -182,6 +195,45 @@ index 10613dc..dc4d83f 100644
 +                }
 +            }
 +
++            Message::PerAppScrollTogglePicker => {
++                self.window_picker_open = !self.window_picker_open;
++                if self.window_picker_open {
++                    // Query the compositor off the main thread; blocking the
++                    // winit event loop mid-frame can leave an acquired
++                    // surface texture unpresented and abort on window close.
++                    self.open_windows = Vec::new();
++                    return cosmic::task::future(async move {
++                        let windows = tokio::task::spawn_blocking(window_picker::open_windows)
++                            .await
++                            .unwrap_or_default();
++                        crate::app::Message::PageMessage(crate::pages::Message::Input(
++                            Message::PerAppScrollWindowsLoaded(windows),
++                        ))
++                    });
++                }
++            }
++
++            Message::PerAppScrollWindowsLoaded(windows) => {
++                self.open_windows = windows;
++            }
++
++            Message::PerAppScrollPickWindow(index) => {
++                if let Some(window) = self.open_windows.get(index) {
++                    if !self
++                        .per_app_scroll
++                        .iter()
++                        .any(|entry| entry.app_id == window.app_id)
++                    {
++                        self.per_app_scroll.push(PerAppScrollEntry {
++                            app_id: window.app_id.clone(),
++                            factor: String::from("1.0"),
++                        });
++                        self.commit_per_app_scroll();
++                    }
++                }
++                self.window_picker_open = false;
++            }
++
 +            Message::PerAppScrollRemove(index) => {
 +                if index < self.per_app_scroll.len() {
 +                    self.per_app_scroll.remove(index);
@@ -192,7 +244,7 @@ index 10613dc..dc4d83f 100644
              Message::SetAcceleration(value, touchpad) => {
                  let profile = if value {
                      AccelProfile::Adaptive
-@@ -121,6 +235,46 @@ impl Page {
+@@ -121,6 +285,46 @@ impl Page {
                  });
              }
  
@@ -240,7 +292,7 @@ index 10613dc..dc4d83f 100644
                  x.scroll_config
                      .get_or_insert(ScrollConfig::default())
 diff --git a/cosmic-settings/src/pages/input/touchpad.rs b/cosmic-settings/src/pages/input/touchpad.rs
-index 29d167c..0096143 100644
+index 29d167c..f5c4851 100644
 --- a/cosmic-settings/src/pages/input/touchpad.rs
 +++ b/cosmic-settings/src/pages/input/touchpad.rs
 @@ -43,6 +43,8 @@ impl page::Page<crate::pages::Message> for Page {
@@ -261,7 +313,7 @@ index 29d167c..0096143 100644
          natural = fl!("scrolling", "natural");
          natural_desc = fl!("scrolling", "natural-desc");
          scroll_speed = fl!("scrolling", "speed");
-@@ -274,11 +278,269 @@ fn scrolling() -> Section<crate::pages::Message> {
+@@ -274,11 +278,311 @@ fn scrolling() -> Section<crate::pages::Message> {
                              |enabled| Message::SetNaturalScroll(enabled, true),
                          ),
                  )
@@ -476,11 +528,13 @@ index 29d167c..0096143 100644
  
 +fn per_app_scroll() -> Section<crate::pages::Message> {
 +    crate::slab!(descriptions {
-+        title = fl!("per-app-scroll");
++        _title = fl!("per-app-scroll");
 +        desc = fl!("per-app-scroll", "desc");
 +        app_id = fl!("per-app-scroll", "app-id");
 +        factor = fl!("per-app-scroll", "factor");
 +        add = fl!("per-app-scroll", "add");
++        add_window = fl!("per-app-scroll", "add-window");
++        no_windows = fl!("per-app-scroll", "no-windows");
 +    });
 +
 +    Section::default()
@@ -518,24 +572,235 @@ index 29d167c..0096143 100644
 +                ]));
 +            }
 +
-+            list.add(
-+                widget::button::standard(&descriptions[add])
-+                    .leading_icon(widget::icon::from_name("list-add-symbolic"))
-+                    .on_press(Message::PerAppScrollAdd),
-+            )
-+            .apply(Element::from)
-+            .map(crate::pages::Message::Input)
++            list = list.add(
++                row::with_capacity(2)
++                    .spacing(8)
++                    .push(
++                        widget::button::standard(&descriptions[add])
++                            .leading_icon(widget::icon::from_name("list-add-symbolic"))
++                            .on_press(Message::PerAppScrollAdd),
++                    )
++                    .push(
++                        widget::button::standard(&descriptions[add_window])
++                            .leading_icon(widget::icon::from_name("window-new-symbolic"))
++                            .on_press(Message::PerAppScrollTogglePicker),
++                    ),
++            );
++
++            // Open-window picker: one button per running application whose
++            // app id doesn't already have an override row.
++            if page.window_picker_open {
++                let mut shown = 0;
++                for (index, window) in page.open_windows.iter().enumerate() {
++                    if page
++                        .per_app_scroll
++                        .iter()
++                        .any(|entry| entry.app_id.trim() == window.app_id)
++                    {
++                        continue;
++                    }
++                    shown += 1;
++
++                    let label = if window.title.is_empty() {
++                        window.app_id.clone()
++                    } else {
++                        format!("{} — {}", window.app_id, window.title)
++                    };
++
++                    list = list.add(
++                        widget::button::text(label)
++                            .on_press(Message::PerAppScrollPickWindow(index)),
++                    );
++                }
++
++                if shown == 0 {
++                    list = list.add(text::body(&descriptions[no_windows]));
++                }
++            }
++
++            list.apply(Element::from).map(crate::pages::Message::Input)
 +        })
 +}
 +
  fn gestures() -> Section<crate::pages::Message> {
      crate::slab!(descriptions {
          switch_workspaces = fl!("switch-workspaces");
+diff --git a/cosmic-settings/src/pages/input/window_picker.rs b/cosmic-settings/src/pages/input/window_picker.rs
+new file mode 100644
+index 0000000..84f1915
+--- /dev/null
++++ b/cosmic-settings/src/pages/input/window_picker.rs
+@@ -0,0 +1,165 @@
++// Copyright 2026 System76 <info@system76.com>
++// SPDX-License-Identifier: GPL-3.0-only
++
++//! One-shot query of the currently open windows via the
++//! `ext-foreign-toplevel-list-v1` Wayland protocol. Used by the per-app
++//! scroll-speed section so users can pick an open window instead of typing
++//! its app id by hand.
++
++use cosmic::cctk::wayland_client::{
++    Connection, Dispatch, Proxy, QueueHandle,
++    globals::{GlobalListContents, registry_queue_init},
++    protocol::wl_registry,
++};
++use cosmic::cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::{
++    ext_foreign_toplevel_handle_v1::{self, ExtForeignToplevelHandleV1},
++    ext_foreign_toplevel_list_v1::{self, ExtForeignToplevelListV1},
++};
++
++/// An open window, as advertised by the compositor.
++#[derive(Clone, Debug)]
++pub struct WindowInfo {
++    pub app_id: String,
++    pub title: String,
++}
++
++/// Returns the currently open windows, deduplicated by app id and sorted.
++/// Connects to the compositor, collects the initial toplevel burst, and
++/// disconnects; returns an empty list if the compositor does not support
++/// `ext-foreign-toplevel-list-v1` or the connection fails.
++pub fn open_windows() -> Vec<WindowInfo> {
++    query().unwrap_or_else(|why| {
++        tracing::warn!(?why, "failed to enumerate open windows");
++        Vec::new()
++    })
++}
++
++#[derive(Default)]
++struct State {
++    windows: Vec<PendingWindow>,
++}
++
++struct PendingWindow {
++    handle: ExtForeignToplevelHandleV1,
++    app_id: String,
++    title: String,
++    done: bool,
++}
++
++fn query() -> Result<Vec<WindowInfo>, Box<dyn std::error::Error>> {
++    let conn = Connection::connect_to_env()?;
++    let (globals, mut event_queue) = registry_queue_init::<State>(&conn)?;
++    let qh = event_queue.handle();
++
++    let list = globals.bind::<ExtForeignToplevelListV1, _, _>(&qh, 1..=1, ())?;
++
++    let mut state = State::default();
++    // The compositor sends every existing toplevel followed by its
++    // title/app_id and a `done` in the initial burst after binding; two
++    // roundtrips make sure the burst has been fully delivered and handled.
++    event_queue.roundtrip(&mut state)?;
++    event_queue.roundtrip(&mut state)?;
++    list.stop();
++
++    let mut windows: Vec<WindowInfo> = state
++        .windows
++        .into_iter()
++        .filter(|window| window.done && !window.app_id.is_empty())
++        .map(|window| WindowInfo {
++            app_id: window.app_id,
++            title: window.title,
++        })
++        .collect();
++
++    windows.sort_by(|a, b| {
++        a.app_id
++            .to_lowercase()
++            .cmp(&b.app_id.to_lowercase())
++            .then_with(|| a.title.cmp(&b.title))
++    });
++    windows.dedup_by(|a, b| a.app_id == b.app_id);
++
++    Ok(windows)
++}
++
++impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
++    fn event(
++        _state: &mut Self,
++        _proxy: &wl_registry::WlRegistry,
++        _event: wl_registry::Event,
++        _data: &GlobalListContents,
++        _conn: &Connection,
++        _qh: &QueueHandle<Self>,
++    ) {
++    }
++}
++
++impl Dispatch<ExtForeignToplevelListV1, ()> for State {
++    fn event(
++        state: &mut Self,
++        _proxy: &ExtForeignToplevelListV1,
++        event: ext_foreign_toplevel_list_v1::Event,
++        _data: &(),
++        _conn: &Connection,
++        _qh: &QueueHandle<Self>,
++    ) {
++        if let ext_foreign_toplevel_list_v1::Event::Toplevel { toplevel } = event {
++            state.windows.push(PendingWindow {
++                handle: toplevel,
++                app_id: String::new(),
++                title: String::new(),
++                done: false,
++            });
++        }
++    }
++
++    cosmic::cctk::wayland_client::event_created_child!(State, ExtForeignToplevelListV1, [
++        ext_foreign_toplevel_list_v1::EVT_TOPLEVEL_OPCODE => (ExtForeignToplevelHandleV1, ())
++    ]);
++}
++
++impl Dispatch<ExtForeignToplevelHandleV1, ()> for State {
++    fn event(
++        state: &mut Self,
++        proxy: &ExtForeignToplevelHandleV1,
++        event: ext_foreign_toplevel_handle_v1::Event,
++        _data: &(),
++        _conn: &Connection,
++        _qh: &QueueHandle<Self>,
++    ) {
++        let Some(index) = state
++            .windows
++            .iter()
++            .position(|window| window.handle.id() == proxy.id())
++        else {
++            return;
++        };
++
++        match event {
++            ext_foreign_toplevel_handle_v1::Event::AppId { app_id } => {
++                state.windows[index].app_id = app_id;
++            }
++            ext_foreign_toplevel_handle_v1::Event::Title { title } => {
++                state.windows[index].title = title;
++            }
++            ext_foreign_toplevel_handle_v1::Event::Done => {
++                state.windows[index].done = true;
++            }
++            ext_foreign_toplevel_handle_v1::Event::Closed => {
++                state.windows.remove(index);
++            }
++            _ => {}
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn list_windows() {
++        for w in super::open_windows() {
++            println!("{} — {}", w.app_id, w.title);
++        }
++    }
++
++}
 diff --git a/i18n/en/cosmic_settings.ftl b/i18n/en/cosmic_settings.ftl
-index eb2babe..7a65ca2 100644
+index 860d19d..c14132a 100644
 --- a/i18n/en/cosmic_settings.ftl
 +++ b/i18n/en/cosmic_settings.ftl
-@@ -689,6 +689,32 @@ scrolling = Scrolling
+@@ -705,6 +705,34 @@ scrolling = Scrolling
      .speed = Scrolling speed
      .natural = Natural scrolling
      .natural-desc = Scroll the content, instead of the view
@@ -565,6 +830,8 @@ index eb2babe..7a65ca2 100644
 +    .app-id = App ID (e.g. firefox)
 +    .factor = Factor
 +    .add = Add application
++    .add-window = Add open window
++    .no-windows = No other open windows found
  
  ## Input: Keyboard
  

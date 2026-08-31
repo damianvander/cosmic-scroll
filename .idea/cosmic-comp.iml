@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-comp/cosmic-comp-config/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-comp/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-comp/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/cosmic-settings/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/page/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/pages/sound/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/pages/wallpapers/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/subscriptions/a11y-manager/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/subscriptions/accessibility/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/subscriptions/airplane-mode/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/subscriptions/bluetooth/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/subscriptions/network-manager/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/subscriptions/settings-daemon/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cosmic-settings/subscriptions/upower/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/cosmic-comp/target" />
+      <excludeFolder url="file://$MODULE_DIR$/cosmic-settings/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

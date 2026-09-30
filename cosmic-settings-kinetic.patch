@@ -1,10 +1,10 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 3bbaebe..30082d8 100644
+index fd1c74bb02135e740c34f879703972ee44e9f102..21e4c85d8639e4389e2ef07438d14674d1eac196 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -73,6 +73,12 @@ debug = true
- cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "e95d895" }
- cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "e95d895" }
+ cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "c0cff4d" }
+ cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "c0cff4d" }
  
 +# Build against the kinetic-patched cosmic-comp-config so the `kinetic` and
 +# `scroll_factor_per_app` fields on ScrollConfig are available to the UI.
@@ -16,7 +16,7 @@ index 3bbaebe..30082d8 100644
  # cosmic-settings-config = { git = "https://github.com/pop-os/cosmic-settings-daemon//", branch = "input_nobuild" }
  
 diff --git a/cosmic-settings/src/pages/input/mod.rs b/cosmic-settings/src/pages/input/mod.rs
-index 10613dc..4f61190 100644
+index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534cefbec6d 100644
 --- a/cosmic-settings/src/pages/input/mod.rs
 +++ b/cosmic-settings/src/pages/input/mod.rs
 @@ -5,22 +5,49 @@ use crate::app;
@@ -292,7 +292,7 @@ index 10613dc..4f61190 100644
                  x.scroll_config
                      .get_or_insert(ScrollConfig::default())
 diff --git a/cosmic-settings/src/pages/input/touchpad.rs b/cosmic-settings/src/pages/input/touchpad.rs
-index 29d167c..f5c4851 100644
+index 29d167cf342e7dc8b8638aefaaf70e7cdb353946..f5c4851c6c68d351d3911729f5906ff98059b906 100644
 --- a/cosmic-settings/src/pages/input/touchpad.rs
 +++ b/cosmic-settings/src/pages/input/touchpad.rs
 @@ -43,6 +43,8 @@ impl page::Page<crate::pages::Message> for Page {
@@ -627,7 +627,7 @@ index 29d167c..f5c4851 100644
          switch_workspaces = fl!("switch-workspaces");
 diff --git a/cosmic-settings/src/pages/input/window_picker.rs b/cosmic-settings/src/pages/input/window_picker.rs
 new file mode 100644
-index 0000000..84f1915
+index 0000000000000000000000000000000000000000..84f1915bd524f841cb09e7a4e839e23223881592
 --- /dev/null
 +++ b/cosmic-settings/src/pages/input/window_picker.rs
 @@ -0,0 +1,165 @@
@@ -797,10 +797,10 @@ index 0000000..84f1915
 +
 +}
 diff --git a/i18n/en/cosmic_settings.ftl b/i18n/en/cosmic_settings.ftl
-index 860d19d..c14132a 100644
+index 7318d9a4d6dcf78906a591ce301083cc2e318f60..71e943cdfa94784c87fa22ded8090649e434b363 100644
 --- a/i18n/en/cosmic_settings.ftl
 +++ b/i18n/en/cosmic_settings.ftl
-@@ -705,6 +705,34 @@ scrolling = Scrolling
+@@ -716,6 +716,34 @@ scrolling = Scrolling
      .speed = Scrolling speed
      .natural = Natural scrolling
      .natural-desc = Scroll the content, instead of the view

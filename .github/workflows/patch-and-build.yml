@@ -9,6 +9,14 @@ on:
       - 'install-kinetic.sh'
       - '.github/workflows/patch-and-build.yml'
 
+  # Validate compatibility before merging without publishing releases.
+  pull_request:
+    branches: [master]
+    paths:
+      - '*.patch'
+      - 'install-kinetic.sh'
+      - '.github/workflows/patch-and-build.yml'
+
   # ── Poll upstream for new epoch tags every 6 hours ──────────────────
   schedule:
     - cron: '0 */6 * * *'
@@ -32,6 +40,10 @@ on:
         type: boolean
         default: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # GitHub auto-disables scheduled workflows after 60 days without repo
   # activity; re-enabling ourselves on every scheduled run resets that timer.
@@ -51,7 +63,7 @@ jobs:
   # ── Resolve the rolling window & decide what needs building ─────────
   # For each component we track the latest upstream epoch-* tag. Which of
   # those (component × tag) combos actually build depends on the trigger:
-  #   push      → all of them (patched binaries must track the latest patches)
+  #   push/PR   → all of them (patched binaries must track the latest patches)
   #   schedule  → only combos without an existing release (new-tag catch-up)
   #   dispatch  → upstream_ref if given, else the window; `force` skips the
   #               release-exists check either way.
@@ -75,7 +87,7 @@ jobs:
 
           EVENT="$GITHUB_EVENT_NAME"
           WINDOW=1   # how many trailing epoch tags to keep buildable; the
-                     # patches only track the latest epoch (currently 1.7.0)
+                     # patches only track the latest epoch (currently 1.9.0)
 
           # Per-component build metadata; crossed with the resolved tags to
           # produce one build-matrix leg per (component × tag) combo.
@@ -165,8 +177,8 @@ jobs:
               commit=${entry#*$'\t'}
               release_tag="patched-${comp}-${tag}"
 
-              if [ "$EVENT" = "push" ]; then
-                build=true;  decision="build (patches changed — forced rebuild)"
+              if [ "$EVENT" = "push" ] || [ "$EVENT" = "pull_request" ]; then
+                build=true;  decision="build (validate current patches)"
               elif [ "$FORCE" = "true" ]; then
                 build=true;  decision="build (force)"
               elif release_exists "$release_tag"; then
@@ -258,11 +270,12 @@ jobs:
         run: |
           set -euo pipefail
           git clone https://github.com/pop-os/cosmic-comp.git cosmic-comp
-          # Match the settings tag; fall back to master if that tag is absent.
+          # Never silently mix a settings release with unreleased config APIs.
           if git -C cosmic-comp rev-parse -q --verify "${{ matrix.tag }}^{commit}" >/dev/null; then
             git -C cosmic-comp checkout "${{ matrix.tag }}"
           else
-            echo "::warning::cosmic-comp has no ${{ matrix.tag }}; using master for cosmic-comp-config"
+            echo "::error::cosmic-comp has no matching ${{ matrix.tag }} tag; select a shared epoch tag"
+            exit 1
           fi
           git -C cosmic-comp apply -3 "$GITHUB_WORKSPACE/patchrepo/cosmic-comp-kinetic.patch"
 
@@ -312,6 +325,7 @@ jobs:
       # replaces the same-named assets in place, which is exactly what we
       # want to keep binaries in sync with the latest patches.
       - name: Create GitHub Release
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ matrix.release_tag }}

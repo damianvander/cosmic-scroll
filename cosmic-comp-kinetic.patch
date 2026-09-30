@@ -1,5 +1,5 @@
 diff --git a/cosmic-comp-config/src/input.rs b/cosmic-comp-config/src/input.rs
-index df6f34c2..13eb111d 100644
+index df6f34c29f160a3b646da11480f072e4fd451d0f..13eb111df72cc6ddabd78ef4c698b225b63d01bc 100644
 --- a/cosmic-comp-config/src/input.rs
 +++ b/cosmic-comp-config/src/input.rs
 @@ -4,6 +4,7 @@
@@ -63,7 +63,7 @@ index df6f34c2..13eb111d 100644
  
  #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 diff --git a/src/config/input_config.rs b/src/config/input_config.rs
-index ae74da68..70f5cb2d 100644
+index ae74da683dc7eee13786bddaa7110122b3e81c2f..70f5cb2dc042cd71cae17add8887c8d08d8af3ad 100644
 --- a/src/config/input_config.rs
 +++ b/src/config/input_config.rs
 @@ -65,6 +65,9 @@ pub fn for_device(device: &InputDevice) -> InputConfig {
@@ -77,7 +77,7 @@ index ae74da68..70f5cb2d 100644
          } else {
              None
 diff --git a/src/config/mod.rs b/src/config/mod.rs
-index 93b53374..29d33c91 100644
+index f8a51585fe9bfb5fc730518b80315ffa13761afa..ed657292082c189953ec4aa7aa41f7ebc531dade 100644
 --- a/src/config/mod.rs
 +++ b/src/config/mod.rs
 @@ -1,7 +1,7 @@
@@ -89,7 +89,7 @@ index 93b53374..29d33c91 100644
      shell::Shell,
      state::{BackendData, State},
      utils::prelude::OutputExt,
-@@ -623,6 +623,73 @@ impl Config {
+@@ -640,6 +640,73 @@ impl Config {
          .map_or(1.0, |x| x.0)
      }
  
@@ -165,7 +165,7 @@ index 93b53374..29d33c91 100644
          Some(
 diff --git a/src/input/kinetic.rs b/src/input/kinetic.rs
 new file mode 100644
-index 00000000..85654944
+index 0000000000000000000000000000000000000000..6a4d7e995b49091202b2bff5094467a77b0a1584
 --- /dev/null
 +++ b/src/input/kinetic.rs
 @@ -0,0 +1,427 @@
@@ -184,7 +184,7 @@ index 00000000..85654944
 +use crate::state::State;
 +use calloop::timer::{TimeoutAction, Timer};
 +use smithay::{
-+    backend::input::{Axis, AxisSource},
++    backend::input::{Axis, AxisSource, InputTime},
 +    input::{Seat, pointer::AxisFrame},
 +    utils::{Logical, Point},
 +};
@@ -492,7 +492,7 @@ index 00000000..85654944
 +    state: &mut State,
 +    seat: &Seat<State>,
 +    delta: Point<f64, Logical>,
-+    time_msec: u32,
++    time: InputTime,
 +) {
 +    let cancelled = seat
 +        .user_data()
@@ -500,21 +500,21 @@ index 00000000..85654944
 +        .map(|scroller| scroller.accumulate_motion(delta))
 +        .unwrap_or(false);
 +    if cancelled {
-+        emit_stop(state, seat, time_msec);
++        emit_stop(state, seat, time);
 +    }
 +}
 +
 +/// Cancel any running fling, emitting a terminating `axis_stop` if one was
 +/// actually active. Used by absolute-positioning motion (tablets, VMs) where
 +/// there is no meaningful delta to accumulate — any motion cancels.
-+pub fn cancel_with_stop(state: &mut State, seat: &Seat<State>, time_msec: u32) {
++pub fn cancel_with_stop(state: &mut State, seat: &Seat<State>, time: InputTime) {
 +    let was_active = seat
 +        .user_data()
 +        .get::<KineticScroller>()
 +        .map(|scroller| scroller.cancel_if_active())
 +        .unwrap_or(false);
 +    if was_active {
-+        emit_stop(state, seat, time_msec);
++        emit_stop(state, seat, time);
 +    }
 +}
 +
@@ -522,11 +522,11 @@ index 00000000..85654944
 +/// kinetic scroll sequence. Clients (Chromium/GTK) use this to end the scroll
 +/// and reset scroll-axis locking; without it a series of scrolls looks like
 +/// one unbroken sequence and stays locked to the first axis.
-+pub fn emit_stop(state: &mut State, seat: &Seat<State>, time_msec: u32) {
++pub fn emit_stop(state: &mut State, seat: &Seat<State>, time: InputTime) {
 +    let Some(ptr) = seat.get_pointer() else {
 +        return;
 +    };
-+    let frame = AxisFrame::new(time_msec)
++    let frame = AxisFrame::new(time)
 +        .source(AxisSource::Continuous)
 +        .stop(Axis::Horizontal)
 +        .stop(Axis::Vertical);
@@ -562,8 +562,8 @@ index 00000000..85654944
 +
 +fn tick_handler(state: &mut State, seat: &Seat<State>) {
 +    let now_time = state.common.clock.now();
-+    let time_msec = now_time.as_millis();
 +    let now: Duration = now_time.into();
++    let time = InputTime::from_micros(now.as_micros() as u64);
 +
 +    let result = seat
 +        .user_data()
@@ -575,7 +575,7 @@ index 00000000..85654944
 +        // Fling decayed to a stop: terminate the Continuous scroll sequence so
 +        // the client resets scroll-axis locking. Do not reschedule.
 +        Tick::Done => {
-+            emit_stop(state, seat, time_msec);
++            emit_stop(state, seat, time);
 +            return;
 +        }
 +        // Fling was cancelled out from under the timer (a new gesture, key,
@@ -584,7 +584,7 @@ index 00000000..85654944
 +        Tick::Idle => return,
 +    };
 +
-+    let mut frame = AxisFrame::new(time_msec).source(AxisSource::Continuous);
++    let mut frame = AxisFrame::new(time).source(AxisSource::Continuous);
 +    if delta.x != 0.0 {
 +        frame = frame.value(Axis::Horizontal, delta.x);
 +    }
@@ -597,27 +597,27 @@ index 00000000..85654944
 +    schedule_tick(state, seat);
 +}
 diff --git a/src/input/mod.rs b/src/input/mod.rs
-index 0e307079..f77c1676 100644
+index af160ae223dc4d032f84cfff5089714478941186..a0cb4ec266bf22d51f57c9ce823a4b8a78c61671 100644
 --- a/src/input/mod.rs
 +++ b/src/input/mod.rs
-@@ -14,7 +14,7 @@ use crate::{
+@@ -17,7 +17,7 @@ use crate::{
          SeatExt, Trigger,
          focus::{
              Stage, render_input_order,
 -            target::{KeyboardFocusTarget, PointerFocusTarget},
 +            target::{KeyboardFocusTarget, PointerFocusTarget, PointerFocusToplevel},
          },
-         grabs::{ReleaseMode, ResizeEdge},
+         grabs::{MenuGrab, MoveGrab, ReleaseMode, ResizeEdge, ResizeGrab},
          layout::{
-@@ -87,6 +87,7 @@ use std::{
+@@ -92,6 +92,7 @@ use std::{
  
  pub mod actions;
  pub mod gestures;
 +pub mod kinetic;
+ pub mod tablet_emu;
  
  /// Identifies the input backend instance an event came from, used to disambiguate device ids
- /// (which are only unique within a single backend instance, see
-@@ -270,6 +271,10 @@ impl State {
+@@ -276,6 +277,10 @@ impl State {
                      let state = event.state();
                      trace!(?keycode, ?state, "key");
  
@@ -626,9 +626,9 @@ index 0e307079..f77c1676 100644
 +                    }
 +
                      let serial = SERIAL_COUNTER.next_serial();
-                     let time = Event::time_msec(&event);
+                     let time = Event::time(&event);
                      let keyboard = seat.get_keyboard().unwrap();
-@@ -391,6 +396,12 @@ impl State {
+@@ -400,6 +405,12 @@ impl State {
                      }
  
                      std::mem::drop(shell);
@@ -636,12 +636,12 @@ index 0e307079..f77c1676 100644
 +                    // Moving the mouse during a kinetic fling cancels it once
 +                    // the accumulated motion exceeds a small threshold (see
 +                    // `kinetic::on_pointer_motion`).
-+                    kinetic::on_pointer_motion(self, &seat, event.delta(), event.time_msec());
++                    kinetic::on_pointer_motion(self, &seat, event.delta(), event.time());
 +
                      ptr.relative_motion(
                          self,
                          under.clone(),
-@@ -626,6 +637,14 @@ impl State {
+@@ -635,6 +646,14 @@ impl State {
                      };
  
                      drop(shell);
@@ -656,18 +656,18 @@ index 0e307079..f77c1676 100644
                      if pointer_confined && new_under.is_none() {
                          ptr.frame(self);
                          return;
-@@ -706,6 +725,10 @@ impl State {
+@@ -715,6 +734,10 @@ impl State {
                  if let Some(seat) = maybe_seat {
                      self.common.idle_notifier_state.notify_activity(&seat);
                      notify_cursor_activity(self, &seat);
 +                    // Absolute-positioning devices (tablets, VMs) have no
 +                    // motion delta to accumulate — any motion while a fling
 +                    // is active cancels it (with a terminating axis_stop).
-+                    kinetic::cancel_with_stop(self, &seat, event.time_msec());
++                    kinetic::cancel_with_stop(self, &seat, event.time());
                      let (output, position) = if matches!(&backend_id, InputBackendId::Ei(_)) {
                          // EI absolute coordinates are in the compositor's *global*
                          // logical space: each advertised region carries its output's
-@@ -829,6 +852,7 @@ impl State {
+@@ -847,6 +870,7 @@ impl State {
  
                  let mut pass_event = !seat.supressed_buttons().remove(&backend_id, button);
                  if event.state() == ButtonState::Pressed {
@@ -675,7 +675,7 @@ index 0e307079..f77c1676 100644
                      // change the keyboard focus unless the pointer is grabbed
                      // We test for any matching surface type here but always use the root
                      // (in case of a window the toplevel) surface for the focus.
-@@ -1026,13 +1050,6 @@ impl State {
+@@ -1044,13 +1068,6 @@ impl State {
                  }
              }
              InputEvent::PointerAxis { event, .. } => {
@@ -689,7 +689,7 @@ index 0e307079..f77c1676 100644
                  let maybe_seat = self
                      .common
                      .shell
-@@ -1040,6 +1057,20 @@ impl State {
+@@ -1058,6 +1075,20 @@ impl State {
                      .seats
                      .for_device(&event.device(), &backend_id)
                      .cloned();
@@ -710,7 +710,7 @@ index 0e307079..f77c1676 100644
                  if let Some(seat) = maybe_seat {
                      self.common.idle_notifier_state.notify_activity(&seat);
                      notify_cursor_activity(self, &seat);
-@@ -1052,6 +1083,7 @@ impl State {
+@@ -1070,6 +1101,7 @@ impl State {
                              .accessibility_zoom
                              .enable_mouse_zoom_shortcuts
                      {
@@ -718,11 +718,11 @@ index 0e307079..f77c1676 100644
                          seat.modifiers_shortcut_queue().clear(&backend_id);
                          if let Some(mut percentage) = event
                              .amount_v120(Axis::Vertical)
-@@ -1073,7 +1105,50 @@ impl State {
+@@ -1091,7 +1123,50 @@ impl State {
                              self.update_zoom(&seat, change, event.source() == AxisSource::Wheel);
                          }
                      } else {
--                        let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
+-                        let mut frame = AxisFrame::new(event.time()).source(event.source());
 +                        // Kinetic-scroll hook. When `kinetic_enabled` and the
 +                        // event is a Finger-source touchpad scroll, we feed
 +                        // samples to the scroller and (on lift) try to start a
@@ -733,7 +733,7 @@ index 0e307079..f77c1676 100644
 +                        if event.source() != AxisSource::Finger {
 +                            kinetic::cancel(&seat);
 +                        } else if kinetic_enabled {
-+                            let t = Duration::from_millis(event.time_msec() as u64);
++                            let t = Duration::from_micros(event.time().micros());
 +                            let dx_raw = event.amount(Axis::Horizontal).unwrap_or(0.0);
 +                            let dy_raw = event.amount(Axis::Vertical).unwrap_or(0.0);
 +                            if dx_raw == 0.0 && dy_raw == 0.0 {
@@ -743,7 +743,7 @@ index 0e307079..f77c1676 100644
 +                                // ends. Otherwise end the sequence now so the
 +                                // client resets scroll-axis locking.
 +                                if !kinetic::try_start_fling(self, &seat) {
-+                                    kinetic::emit_stop(self, &seat, event.time_msec());
++                                    kinetic::emit_stop(self, &seat, event.time());
 +                                }
 +                                return;
 +                            }
@@ -756,7 +756,7 @@ index 0e307079..f77c1676 100644
 +                                dy_raw * scroll_factor,
 +                            ));
 +                            if kinetic::push(&seat, delta, t, kinetic_params) {
-+                                kinetic::emit_stop(self, &seat, event.time_msec());
++                                kinetic::emit_stop(self, &seat, event.time());
 +                            }
 +                        }
 +
@@ -766,11 +766,11 @@ index 0e307079..f77c1676 100644
 +                            } else {
 +                                event.source()
 +                            };
-+                        let mut frame = AxisFrame::new(event.time_msec()).source(frame_source);
++                        let mut frame = AxisFrame::new(event.time()).source(frame_source);
                          let horizontal_amount = event
                              .amount(Axis::Horizontal)
                              .or_else(|| Some(event.amount_v120(Axis::Horizontal)? * 15.0 / 120.));
-@@ -1091,7 +1166,7 @@ impl State {
+@@ -1109,7 +1184,7 @@ impl State {
                                          (discrete * scroll_factor).round() as i32,
                                      );
                                  }
@@ -779,7 +779,7 @@ index 0e307079..f77c1676 100644
                                  frame = frame.stop(Axis::Horizontal);
                              }
                          }
-@@ -1112,7 +1187,7 @@ impl State {
+@@ -1130,7 +1205,7 @@ impl State {
                                          (discrete * scroll_factor).round() as i32,
                                      );
                                  }
@@ -788,7 +788,7 @@ index 0e307079..f77c1676 100644
                                  frame = frame.stop(Axis::Vertical);
                              }
                          }
-@@ -1371,6 +1446,12 @@ impl State {
+@@ -1389,6 +1464,12 @@ impl State {
                      .cloned();
                  if let Some(seat) = maybe_seat {
                      self.common.idle_notifier_state.notify_activity(&seat);
@@ -801,7 +801,7 @@ index 0e307079..f77c1676 100644
                      let serial = SERIAL_COUNTER.next_serial();
                      let pointer = seat.get_pointer().unwrap();
                      pointer.gesture_hold_begin(
-@@ -3005,6 +3086,25 @@ impl State {
+@@ -3140,6 +3221,25 @@ impl State {
      }
  }
  
@@ -828,10 +828,10 @@ index 0e307079..f77c1676 100644
  fn cursor_sessions_for_output<'a>(
      shell: &'a Shell,
 diff --git a/src/shell/focus/mod.rs b/src/shell/focus/mod.rs
-index cab37a85..ad305610 100644
+index dcfd55de9b66bf80f2cbc1c4e735d567acfb6b89..4543b4e2fe1e89edc6119a679540bf8c7fa563c8 100644
 --- a/src/shell/focus/mod.rs
 +++ b/src/shell/focus/mod.rs
-@@ -365,6 +365,13 @@ fn update_focus_state(
+@@ -372,6 +372,13 @@ fn update_focus_state(
      serial: Option<Serial>,
      should_update_cursor: bool,
  ) {
@@ -846,7 +846,7 @@ index cab37a85..ad305610 100644
      if let Some(keyboard) = seat.get_keyboard() {
          // remove constraint when target changed
 diff --git a/src/shell/seats.rs b/src/shell/seats.rs
-index 27b608cf..87c98ad4 100644
+index 27b608cf4e131c90371278ef0f84466bed0eac6a..87c98ad4c7e3d2865fa7d849b4c854332a5fa3fc 100644
 --- a/src/shell/seats.rs
 +++ b/src/shell/seats.rs
 @@ -5,7 +5,10 @@ use std::{any::Any, cell::RefCell, collections::HashMap, sync::Mutex};

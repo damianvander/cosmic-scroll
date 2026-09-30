@@ -36,12 +36,12 @@ On other distros, build from source with the patches applied (see below).
 ## Develop
 
 Upstream sources are not vendored. Clone them into the gitignored working
-dirs at the epoch tag the patches track (currently `epoch-1.7.0`) and apply
+dirs at the epoch tag the patches track (currently `epoch-1.9.0`) and apply
 the patches:
 
 ```bash
-git clone -b epoch-1.7.0 https://github.com/pop-os/cosmic-comp.git     cosmic-comp
-git clone -b epoch-1.7.0 https://github.com/pop-os/cosmic-settings.git cosmic-settings
+git clone -b epoch-1.9.0 https://github.com/pop-os/cosmic-comp.git     cosmic-comp
+git clone -b epoch-1.9.0 https://github.com/pop-os/cosmic-settings.git cosmic-settings
 git -C cosmic-comp     apply ../cosmic-comp-kinetic.patch
 git -C cosmic-settings apply ../cosmic-settings-kinetic.patch
 ```
@@ -53,12 +53,28 @@ directory (its patch points the `cosmic-comp-config` dependency at
 After editing, regenerate the patches:
 
 ```bash
-git -C cosmic-comp     diff > cosmic-comp-kinetic.patch
-git -C cosmic-settings diff > cosmic-settings-kinetic.patch
+git -C cosmic-comp     diff HEAD > cosmic-comp-kinetic.patch
+git -C cosmic-settings diff HEAD > cosmic-settings-kinetic.patch
 ```
 
 Pushing to master triggers CI (`.github/workflows/patch-and-build.yml`): it
-applies the patches to the last 3 upstream `epoch-*` tags of each component,
+applies the patches to the latest upstream `epoch-*` tag of each component,
 builds in an `archlinux:latest` container, and publishes
 `patched-<component>-<epoch>` releases. It also runs every 6 hours to pick up
 new upstream tags.
+
+Pull requests run the same patch-and-build checks without publishing releases.
+The current patches target **epoch-1.9.0** for both components, including
+Smithay's `InputTime` API. Older epochs may require patches from an earlier
+commit of this repository. The settings build requires a matching cosmic-comp
+epoch tag; CI fails explicitly if it is missing instead of using upstream master.
+
+To check patch application before building (from clean upstream checkouts):
+
+```bash
+git -C cosmic-comp     apply --check ../cosmic-comp-kinetic.patch
+git -C cosmic-settings apply --check ../cosmic-settings-kinetic.patch
+```
+
+Use `git diff HEAD` when regenerating patches after `git apply -3`, which stages
+changes, and stage any newly added files first so they are included in the diff.

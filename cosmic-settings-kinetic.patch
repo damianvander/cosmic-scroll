@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index fd1c74bb02135e740c34f879703972ee44e9f102..21e4c85d8639e4389e2ef07438d14674d1eac196 100644
+index fd1c74b..21e4c85 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -73,6 +73,12 @@ debug = true
@@ -16,10 +16,10 @@ index fd1c74bb02135e740c34f879703972ee44e9f102..21e4c85d8639e4389e2ef07438d14674
  # cosmic-settings-config = { git = "https://github.com/pop-os/cosmic-settings-daemon//", branch = "input_nobuild" }
  
 diff --git a/cosmic-settings/src/pages/input/mod.rs b/cosmic-settings/src/pages/input/mod.rs
-index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534cefbec6d 100644
+index 494e581..c4ba545 100644
 --- a/cosmic-settings/src/pages/input/mod.rs
 +++ b/cosmic-settings/src/pages/input/mod.rs
-@@ -5,22 +5,49 @@ use crate::app;
+@@ -5,23 +5,50 @@ use crate::app;
  use cosmic::Task;
  use cosmic::cosmic_config::{self, ConfigGet, ConfigSet};
  use cosmic_comp_config::input::{
@@ -32,6 +32,12 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
 +use std::collections::HashMap;
  use tracing::error;
  
+ pub mod drawing_tablet;
+ pub mod keyboard;
+ pub mod mouse;
+ pub mod touchpad;
++mod window_picker;
++
 +/// One editable per-app scroll-factor override row. The values are kept as
 +/// strings so partial input (e.g. `0.`) survives while typing; they are
 +/// parsed and committed to the config on every change.
@@ -40,11 +46,6 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
 +    pub app_id: String,
 +    pub factor: String,
 +}
-+
- pub mod keyboard;
- pub mod mouse;
- pub mod touchpad;
-+mod window_picker;
  
  #[derive(Clone, Debug)]
  pub enum Message {
@@ -71,7 +72,7 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
      SetMouseSpeed(f64, bool),
      SetNaturalScroll(bool, bool),
      SetSecondaryClickBehavior(Option<ClickMethod>, bool),
-@@ -35,6 +62,14 @@ pub struct Page {
+@@ -38,6 +65,14 @@ pub struct Page {
      #[allow(dead_code)]
      input_touchpad: InputConfig,
  
@@ -86,7 +87,7 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
      // Mouse
      primary_button: cosmic::widget::segmented_button::SingleSelectModel,
  
-@@ -69,11 +104,17 @@ impl Default for Page {
+@@ -72,11 +107,17 @@ impl Default for Page {
          let idx = input_touchpad.left_handed.unwrap_or(false) as u16;
          touchpad_primary_button.activate_position(idx);
  
@@ -104,7 +105,7 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
              // Mouse
              primary_button,
  
-@@ -83,6 +124,26 @@ impl Default for Page {
+@@ -86,6 +127,26 @@ impl Default for Page {
      }
  }
  
@@ -131,7 +132,7 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
  impl Page {
      fn update_input<F: Fn(&mut InputConfig)>(&mut self, touchpad: bool, f: F) {
          let (name, input_config) = if touchpad {
-@@ -96,9 +157,112 @@ impl Page {
+@@ -99,9 +160,112 @@ impl Page {
          }
      }
  
@@ -244,7 +245,7 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
              Message::SetAcceleration(value, touchpad) => {
                  let profile = if value {
                      AccelProfile::Adaptive
-@@ -121,6 +285,46 @@ impl Page {
+@@ -124,6 +288,46 @@ impl Page {
                  });
              }
  
@@ -292,7 +293,7 @@ index 10613dce4bf77a4186208927303697a18de2ff16..4f611906b17a302935d8eddf7caf2534
                  x.scroll_config
                      .get_or_insert(ScrollConfig::default())
 diff --git a/cosmic-settings/src/pages/input/touchpad.rs b/cosmic-settings/src/pages/input/touchpad.rs
-index 29d167cf342e7dc8b8638aefaaf70e7cdb353946..f5c4851c6c68d351d3911729f5906ff98059b906 100644
+index 511fcc3..229fdbe 100644
 --- a/cosmic-settings/src/pages/input/touchpad.rs
 +++ b/cosmic-settings/src/pages/input/touchpad.rs
 @@ -43,6 +43,8 @@ impl page::Page<crate::pages::Message> for Page {
@@ -304,7 +305,7 @@ index 29d167cf342e7dc8b8638aefaaf70e7cdb353946..f5c4851c6c68d351d3911729f5906ff9
              sections.insert(gestures()),
          ])
      }
-@@ -193,6 +195,8 @@ fn click_behavior() -> Section<crate::pages::Message> {
+@@ -223,6 +225,8 @@ fn click_behavior() -> Section<crate::pages::Message> {
  fn scrolling() -> Section<crate::pages::Message> {
      crate::slab!(descriptions {
          edge = fl!("scrolling", "edge");
@@ -313,7 +314,7 @@ index 29d167cf342e7dc8b8638aefaaf70e7cdb353946..f5c4851c6c68d351d3911729f5906ff9
          natural = fl!("scrolling", "natural");
          natural_desc = fl!("scrolling", "natural-desc");
          scroll_speed = fl!("scrolling", "speed");
-@@ -274,11 +278,311 @@ fn scrolling() -> Section<crate::pages::Message> {
+@@ -304,11 +308,311 @@ fn scrolling() -> Section<crate::pages::Message> {
                              |enabled| Message::SetNaturalScroll(enabled, true),
                          ),
                  )
@@ -627,7 +628,7 @@ index 29d167cf342e7dc8b8638aefaaf70e7cdb353946..f5c4851c6c68d351d3911729f5906ff9
          switch_workspaces = fl!("switch-workspaces");
 diff --git a/cosmic-settings/src/pages/input/window_picker.rs b/cosmic-settings/src/pages/input/window_picker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..84f1915bd524f841cb09e7a4e839e23223881592
+index 0000000..84f1915
 --- /dev/null
 +++ b/cosmic-settings/src/pages/input/window_picker.rs
 @@ -0,0 +1,165 @@
@@ -797,10 +798,10 @@ index 0000000000000000000000000000000000000000..84f1915bd524f841cb09e7a4e839e232
 +
 +}
 diff --git a/i18n/en/cosmic_settings.ftl b/i18n/en/cosmic_settings.ftl
-index 7318d9a4d6dcf78906a591ce301083cc2e318f60..71e943cdfa94784c87fa22ded8090649e434b363 100644
+index b27e2f7..6bede6f 100644
 --- a/i18n/en/cosmic_settings.ftl
 +++ b/i18n/en/cosmic_settings.ftl
-@@ -716,6 +716,34 @@ scrolling = Scrolling
+@@ -720,6 +720,34 @@ scrolling = Scrolling
      .speed = Scrolling speed
      .natural = Natural scrolling
      .natural-desc = Scroll the content, instead of the view

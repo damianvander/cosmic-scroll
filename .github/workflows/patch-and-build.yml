@@ -87,7 +87,7 @@ jobs:
 
           EVENT="$GITHUB_EVENT_NAME"
           WINDOW=1   # how many trailing epoch tags to keep buildable; the
-                     # patches only track the latest epoch (currently 1.9.0)
+                     # patches only track the latest epoch (currently 1.11.0)
 
           # Per-component build metadata; crossed with the resolved tags to
           # produce one build-matrix leg per (component × tag) combo.

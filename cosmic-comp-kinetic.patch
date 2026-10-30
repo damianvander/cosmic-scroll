@@ -165,10 +165,10 @@ index be509e72..d2d54bed 100644
          Some(
 diff --git a/src/input/kinetic.rs b/src/input/kinetic.rs
 new file mode 100644
-index 00000000..6a4d7e99
+index 00000000..e5045c03
 --- /dev/null
 +++ b/src/input/kinetic.rs
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,435 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +//
 +// Compositor-side kinetic (inertial) scrolling for two-finger touchpad scroll.
@@ -190,8 +190,10 @@ index 00000000..6a4d7e99
 +};
 +use std::{cell::RefCell, collections::VecDeque, time::Duration};
 +
-+/// Samples within this window of the most recent push contribute to the
-+/// fling velocity at lift; older samples are dropped by [`KineticScroller::trim`].
++/// Samples within this window of the finger lift contribute to the fling
++/// velocity; older samples are dropped by [`KineticScroller::trim`]. A finger
++/// that stops and rests on the pad for longer than this before lifting
++/// therefore produces no fling, since all of its samples predate the window.
 +/// Biases the velocity estimate toward what the finger was doing *just* before
 +/// release rather than averaging across the whole gesture.
 +pub const DEFAULT_VELOCITY_WINDOW: Duration = Duration::from_millis(80);
@@ -317,12 +319,18 @@ index 00000000..6a4d7e99
 +
 +    /// Compute velocity from buffered samples and, if above the resolved
 +    /// minimum fling velocity, start the fling. Returns the initial velocity
-+    /// when a fling actually starts. The buffer is already trimmed to the
-+    /// velocity window by [`Self::push`], so `first`/`last` are the velocity
-+    /// window directly — no further filtering needed.
-+    fn start_fling(&self) -> Option<Point<f64, Logical>> {
++    /// when a fling actually starts.
++    ///
++    /// [`Self::push`] trims the buffer relative to the latest *motion* sample,
++    /// but a finger that stops moving while still on the pad emits no further
++    /// samples, so by lift time the buffer can hold nothing but stale
++    /// pre-pause motion. Trim again against `lift` so only samples within the
++    /// velocity window of the actual lift count; a buffer that is entirely
++    /// older than that yields no fling.
++    fn start_fling(&self, lift: Duration) -> Option<Point<f64, Logical>> {
 +        let mut inner = self.0.borrow_mut();
 +        let params = inner.params;
++        Self::trim(&mut inner.samples, lift, params.velocity_window);
 +        let (first, last) = inner.samples.front().zip(inner.samples.back())?;
 +        let span = last.time.saturating_sub(first.time).as_secs_f64();
 +        let total = inner
@@ -534,14 +542,14 @@ index 00000000..6a4d7e99
 +    ptr.frame(state);
 +}
 +
-+/// Try to start a fling from buffered samples. Returns true if one started —
-+/// caller should suppress emitting any axis frame for this lift; the fling
-+/// will emit decay frames itself.
-+pub fn try_start_fling(state: &mut State, seat: &Seat<State>) -> bool {
++/// Try to start a fling from buffered samples, given the timestamp of the
++/// finger lift. Returns true if one started — caller should suppress emitting
++/// any axis frame for this lift; the fling will emit decay frames itself.
++pub fn try_start_fling(state: &mut State, seat: &Seat<State>, lift: Duration) -> bool {
 +    let started = seat
 +        .user_data()
 +        .get::<KineticScroller>()
-+        .and_then(|s| s.start_fling())
++        .and_then(|s| s.start_fling(lift))
 +        .is_some();
 +    if started {
 +        schedule_tick(state, seat);
@@ -597,7 +605,7 @@ index 00000000..6a4d7e99
 +    schedule_tick(state, seat);
 +}
 diff --git a/src/input/mod.rs b/src/input/mod.rs
-index d51dd8a6..aa54ab73 100644
+index d51dd8a6..7cfab27d 100644
 --- a/src/input/mod.rs
 +++ b/src/input/mod.rs
 @@ -20,7 +20,7 @@ use crate::{
@@ -718,7 +726,7 @@ index d51dd8a6..aa54ab73 100644
                          seat.modifiers_shortcut_queue().clear(&backend_id);
                          if let Some(mut percentage) = event
                              .amount_v120(Axis::Vertical)
-@@ -1146,7 +1178,50 @@ impl State {
+@@ -1146,7 +1178,51 @@ impl State {
                              self.update_zoom(&seat, change, event.source() == AxisSource::Wheel);
                          }
                      } else {
@@ -738,11 +746,12 @@ index d51dd8a6..aa54ab73 100644
 +                            let dy_raw = event.amount(Axis::Vertical).unwrap_or(0.0);
 +                            if dx_raw == 0.0 && dy_raw == 0.0 {
 +                                // Finger lift. Start a fling if there's enough
-+                                // velocity — it plays out as its own Continuous
++                                // velocity within the window before *this*
++                                // lift — it plays out as its own Continuous
 +                                // sequence and emits its own `axis_stop` when it
 +                                // ends. Otherwise end the sequence now so the
 +                                // client resets scroll-axis locking.
-+                                if !kinetic::try_start_fling(self, &seat) {
++                                if !kinetic::try_start_fling(self, &seat, t) {
 +                                    kinetic::emit_stop(self, &seat, event.time());
 +                                }
 +                                return;
@@ -770,7 +779,7 @@ index d51dd8a6..aa54ab73 100644
                          let horizontal_amount = event
                              .amount(Axis::Horizontal)
                              .or_else(|| Some(event.amount_v120(Axis::Horizontal)? * 15.0 / 120.));
-@@ -1164,7 +1239,7 @@ impl State {
+@@ -1164,7 +1240,7 @@ impl State {
                                          (discrete * scroll_factor).round() as i32,
                                      );
                                  }
@@ -779,7 +788,7 @@ index d51dd8a6..aa54ab73 100644
                                  frame = frame.stop(Axis::Horizontal);
                              }
                          }
-@@ -1185,7 +1260,7 @@ impl State {
+@@ -1185,7 +1261,7 @@ impl State {
                                          (discrete * scroll_factor).round() as i32,
                                      );
                                  }
@@ -788,7 +797,7 @@ index d51dd8a6..aa54ab73 100644
                                  frame = frame.stop(Axis::Vertical);
                              }
                          }
-@@ -1444,6 +1519,12 @@ impl State {
+@@ -1444,6 +1520,12 @@ impl State {
                      .cloned();
                  if let Some(seat) = maybe_seat {
                      self.common.idle_notifier_state.notify_activity(&seat);
@@ -801,7 +810,7 @@ index d51dd8a6..aa54ab73 100644
                      let serial = SERIAL_COUNTER.next_serial();
                      let pointer = seat.get_pointer().unwrap();
                      pointer.gesture_hold_begin(
-@@ -3210,6 +3291,25 @@ impl State {
+@@ -3210,6 +3292,25 @@ impl State {
      }
  }
  
